@@ -7,7 +7,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
       - run: npm ci || npm i
       - run: npm i -D snarkjs@0.7.5
       - name: Ensure ptau
@@ -15,7 +15,7 @@ jobs:
           mkdir -p build
           curl -L --fail -o build/pot16_final.ptau https://hermez.s3.eu-west-1.amazonaws.com/powersOfTau28_hez_final_16.ptau
           ./node_modules/.bin/snarkjs powersoftau verify build/pot16_final.ptau
-      - name: Recompile (safety)
+      - name: Compile circuit (safety)
         run: |
           circom circuits/zkCoupon.circom --r1cs --wasm --sym -o build
       - name: FFLONK setup
