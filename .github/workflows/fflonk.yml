@@ -1,4 +1,4 @@
-name: fflonk-setup
+name: plonk-setup
 on: workflow_dispatch
 
 jobs:
@@ -6,12 +6,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+        with: { node-version: '20' }
 
-      - name: Install Circom v2
+      # Circom v2
+      - name: Install Circom
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config build-essential libssl-dev
@@ -20,32 +19,31 @@ jobs:
           $HOME/.cargo/bin/cargo install --locked --git https://github.com/iden3/circom circom
           circom --version
 
-      - name: Install snarkjs
-        run: npm i -D snarkjs@0.7.5
+      - run: npm i -D snarkjs@0.7.5
 
-      # 🔧 Build the ptau in CI (no external download)
-      - name: Create ptau (power 18)
+      # Bigger ptau to avoid “section too small”
+      - name: Create ptau (power 20)
         run: |
           mkdir -p build
-          ./node_modules/.bin/snarkjs powersoftau new bn128 18 build/pot18_0000.ptau
-          ./node_modules/.bin/snarkjs powersoftau contribute build/pot18_0000.ptau build/pot18_0001.ptau -e="ci-contrib"
-          ./node_modules/.bin/snarkjs powersoftau prepare phase2 build/pot18_0001.ptau build/pot18_final.ptau
-          ./node_modules/.bin/snarkjs powersoftau verify build/pot18_final.ptau
+          ./node_modules/.bin/snarkjs powersoftau new bn128 20 build/pot20_0000.ptau
+          ./node_modules/.bin/snarkjs powersoftau contribute build/pot20_0000.ptau build/pot20_0001.ptau -e="ci-contrib"
+          ./node_modules/.bin/snarkjs powersoftau prepare phase2 build/pot20_0001.ptau build/pot20_final.ptau
+          ./node_modules/.bin/snarkjs powersoftau verify build/pot20_final.ptau
 
       - name: Compile circuit
         run: |
           circom circuits/zkCoupon.circom --r1cs --wasm --sym -o build
           ls -lh build
 
-      - name: FFLONK setup
+      - name: PLONK setup + vkey
         run: |
-          ./node_modules/.bin/snarkjs fflonk setup build/zkCoupon.r1cs build/pot18_final.ptau build/zkCoupon_fflonk.zkey
-          ./node_modules/.bin/snarkjs zkey export verificationkey build/zkCoupon_fflonk.zkey public/verification_key.json
+          ./node_modules/.bin/snarkjs plonk setup build/zkCoupon.r1cs build/pot20_final.ptau build/zkCoupon_plonk.zkey
+          ./node_modules/.bin/snarkjs zkey export verificationkey build/zkCoupon_plonk.zkey public/verification_key.json
 
       - uses: actions/upload-artifact@v4
         with:
-          name: zkCoupon-fflonk-artifacts
+          name: zkCoupon-plonk-artifacts
           path: |
-            build/pot16_final.ptau
-            build/zkCoupon_fflonk.zkey
+            build/pot20_final.ptau
+            build/zkCoupon_plonk.zkey
             public/verification_key.json
