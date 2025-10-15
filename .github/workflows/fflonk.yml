@@ -37,7 +37,7 @@ jobs:
 
       - name: PLONK setup + vkey
         run: |
-          ./node_modules/.bin/snarkjs plonk setup build/zkCoupon.r1cs build/pot20_final.ptau build/zkCoupon_plonk.zkey
+          ./node_modules/.bin/snarkjs plonk setup build/zkCoupon.r1cs build/pot20_final.ptau build/zkCoupon_plonk.zkey mkdir -p public
           ./node_modules/.bin/snarkjs zkey export verificationkey build/zkCoupon_plonk.zkey public/verification_key.json
 
       - uses: actions/upload-artifact@v4
