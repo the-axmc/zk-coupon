@@ -1,25 +1,14 @@
-# build artifacts
 build/**/*.ptau
 build/**/*.zkey
 build/**/*.r1cs
 build/**/*.wtns
-
-# circuit outputs
 inputs/users/
 public/input.json
 public/proof.json
 public/publicSignals.json
-
-# dependencies
 node_modules/
-.cache/
-dist/
-
-# secrets
 .env
 *.key
 *.pem
-
-# OS / editor junk
 .DS_Store
 *.log
