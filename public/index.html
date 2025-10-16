@@ -5,56 +5,154 @@
   <title>ZK Coupon Demo</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body{ font-family: system-ui, sans-serif; margin:2rem; }
-    textarea{ width:100%; height:140px; }
-    pre{ background:#f6f6f6; padding:1rem; overflow:auto; }
-    button{ padding:.6rem 1rem; }
+    :root { --bg:#0b0b0b; --fg:#eee; --muted:#b7b7b7; --card:#1a1a1a; --accent:#8b5cf6; }
+    body{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:2rem; color:var(--fg); background:var(--bg); }
+    .row{ display:flex; gap:1rem; flex-wrap:wrap; margin:.75rem 0; }
+    button{ padding:.6rem 1rem; border-radius:.75rem; border:0; background:var(--accent); color:white; cursor:pointer; }
+    button:disabled{ opacity:.6; cursor:not-allowed; }
+    .card{ background:var(--card); border-radius:1rem; padding:1rem; }
+    textarea{ width:100%; height:160px; background:#0f0f0f; color:#d9d9d9; border:1px solid #333; border-radius:.75rem; padding:.75rem; }
+    pre{ background:#0f0f0f; color:#d9d9d9; border:1px solid #333; border-radius:.75rem; padding:1rem; overflow:auto; }
+    small{ color:var(--muted); }
+    code{ color:#cbd5ff; }
   </style>
 </head>
 <body>
   <h1>Anonymous Check-In (ZK Coupon)</h1>
-  <p>Prove you are on the list without revealing your identity. One-time use via nullifier.</p>
+  <p><small>Prove you’re on the list (Merkle) without revealing your identity. One-time use enforced by a nullifier.</small></p>
 
-  <button id="prove">Generate Proof</button>
-  <p id="status"></p>
+  <div class="row">
+    <button id="prove">Generate Proof</button>
+    <button id="verifyOnly">Verify Existing proof.json</button>
+    <small id="status"></small>
+  </div>
 
-  <h3>Public Signals</h3>
-  <pre id="pub"></pre>
+  <div class="row">
+    <div class="card" style="flex:1; min-width:280px;">
+      <h3>Public Signals</h3>
+      <pre id="pub">–</pre>
+    </div>
+    <div class="card" style="flex:1; min-width:280px;">
+      <h3>Local Verification</h3>
+      <pre id="verify">–</pre>
+    </div>
+  </div>
 
-  <h3>Proof</h3>
-  <textarea id="proof" readonly></textarea>
+  <div class="card">
+    <h3>Proof (JSON)</h3>
+    <textarea id="proof" readonly>–</textarea>
+    <div class="row">
+      <button id="downloadProof">Download proof.json</button>
+      <button id="downloadSignals">Download publicSignals.json</button>
+    </div>
+  </div>
 
-  <h3>Local Verification</h3>
-  <pre id="verify"></pre>
-
+  <!-- Browser build of snarkjs -->
   <script src="https://unpkg.com/snarkjs@0.7.3/build/snarkjs.min.js"></script>
   <script>
-    async function go(){
-      const log = (m)=> document.getElementById('status').textContent = m;
+    const wasmUrl = "zkCoupon.wasm";
+    const zkeyUrl = "zkCoupon_plonk.zkey"; // <-- PLONK key
+    const inputUrl = "input.json";
+    const vkeyUrl  = "verification_key.json";
+    const rootUrl  = "root.json";
 
-      log("Loading inputs & artifacts…");
-      const [input, vkey] = await Promise.all([
-        fetch("input.json").then(r=>r.json()),
-        fetch("verification_key.json").then(r=>r.json())
-      ]);
+    const $ = (id) => document.getElementById(id);
+    const setStatus = (m) => { $("status").textContent = m; };
+    const pretty = (x) => JSON.stringify(x, null, 2);
 
-      // snarkjs expects BigInts as strings; already done in our generator.
-      const wasmUrl = "zkCoupon.wasm";
-      const zkeyUrl = "zkCoupon_final.zkey";
-
-      log("Proving (client-side) … this may take a few seconds");
-      const { proof, publicSignals } =
-        await window.snarkjs.plonk.fullProve(input, wasmUrl, zkeyUrl);
-
-      document.getElementById('pub').textContent = JSON.stringify(publicSignals, null, 2);
-      document.getElementById('proof').value = JSON.stringify(proof, null, 2);
-
-      const ok = await window.snarkjs.plonk.verify(vkey, publicSignals, proof);
-      document.getElementById('verify').textContent = ok ? "✅ Verified locally" : "❌ Failed";
-      log("Done.");
+    async function loadJSON(path) {
+      const r = await fetch(path);
+      if (!r.ok) throw new Error(`Fetch failed: ${path} (${r.status})`);
+      return r.json();
     }
 
-    document.getElementById('prove').onclick = go;
+    function download(name, dataObj) {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([pretty(dataObj)], {type: "application/json"}));
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    async function prove() {
+      $("prove").disabled = true;
+      $("verifyOnly").disabled = true;
+      try {
+        setStatus("Loading inputs & artifacts…");
+        const t0 = performance.now();
+
+        const [input, vkey, rootObj] = await Promise.all([
+          loadJSON(inputUrl),
+          loadJSON(vkeyUrl),
+          loadJSON(rootUrl).catch(()=>({root:null}))
+        ]);
+
+        setStatus("Proving (client-side)…");
+        const t1 = performance.now();
+        const { proof, publicSignals } = await window.snarkjs.plonk.fullProve(input, wasmUrl, zkeyUrl);
+        const t2 = performance.now();
+
+        // optional sanity: bind proof to the configured root/externalNullifier
+        const [root, en, nullifierHash] = publicSignals.map(x => BigInt(x).toString());
+        if (rootObj.root && rootObj.root !== root) {
+          console.warn("Public root doesn’t match root.json. UI will still verify, but check your inputs.");
+        }
+
+        $("pub").textContent = pretty(publicSignals);
+        $("proof").value = pretty(proof);
+
+        setStatus("Verifying locally…");
+        const ok = await window.snarkjs.plonk.verify(vkey, publicSignals, proof);
+        $("verify").textContent = ok ? "✅ Verified locally" : "❌ Failed verification";
+
+        const proveMs = Math.round(t2 - t1);
+        const totalMs = Math.round(t2 - t0);
+        setStatus(`Done. Prove: ~${proveMs} ms, total: ~${totalMs} ms`);
+        
+        // stash for download buttons
+        window.__lastProof = proof;
+        window.__lastSignals = publicSignals;
+      } catch (err) {
+        console.error(err);
+        $("verify").textContent = "❌ Error: " + (err && err.message || err);
+        setStatus("Error.");
+      } finally {
+        $("prove").disabled = false;
+        $("verifyOnly").disabled = false;
+      }
+    }
+
+    async function verifyExisting() {
+      $("verifyOnly").disabled = true;
+      $("prove").disabled = true;
+      try {
+        setStatus("Loading proof.json, publicSignals.json, and vkey…");
+        const [proof, publicSignals, vkey] = await Promise.all([
+          loadJSON("proof.json"),
+          loadJSON("publicSignals.json"),
+          loadJSON(vkeyUrl)
+        ]);
+        const ok = await window.snarkjs.plonk.verify(vkey, publicSignals, proof);
+        $("pub").textContent = pretty(publicSignals);
+        $("proof").value = pretty(proof);
+        $("verify").textContent = ok ? "✅ Verified locally" : "❌ Failed verification";
+        setStatus("Verify-only complete.");
+        window.__lastProof = proof;
+        window.__lastSignals = publicSignals;
+      } catch (err) {
+        console.error(err);
+        $("verify").textContent = "❌ Error: " + (err && err.message || err);
+        setStatus("Error.");
+      } finally {
+        $("verifyOnly").disabled = false;
+        $("prove").disabled = false;
+      }
+    }
+
+    $("prove").onclick = prove;
+    $("verifyOnly").onclick = verifyExisting;
+    $("downloadProof").onclick = () => download("proof.json", window.__lastProof ?? {note:"Generate a proof first"});
+    $("downloadSignals").onclick = () => download("publicSignals.json", window.__lastSignals ?? {note:"Generate a proof first"});
   </script>
 </body>
 </html>

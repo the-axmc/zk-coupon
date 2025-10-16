@@ -1,85 +1,98 @@
-import { poseidon } from "circomlibjs";
+// scripts/buildTree.mjs  (ESM; Node 20+)
 import fs from "fs";
-
-const N_LEVELS = 16;
-const N = 8; // demo; can be up to 2^N_LEVELS
-
-function big(n){ return BigInt(n); }
-function toHex(x){ return "0x" + BigInt(x).toString(16); }
-
-// 1) generate secrets (in prod you’d provision them securely)
-const secrets = Array.from({length:N}, () =>
-  (BigInt.asUintN(254, BigInt("0x" + cryptoRandomHex(64)))));
-
-function cryptoRandomHex(nBytes){
-  // not cryptographically strong in Node <19 without WebCrypto; adequate for demo
-  return [...crypto.getRandomValues(new Uint8Array(nBytes))]
-    .map(b=>b.toString(16).padStart(2,"0")).join("");
-}
-
-// Quick polyfill for WebCrypto in Node if needed:
 import { webcrypto as crypto } from "node:crypto";
+import { buildPoseidon } from "circomlibjs";
 
-// 2) leaves = poseidon(secret)
-const leaves = await Promise.all(secrets.map(s => poseidon([s])));
+const N_LEVELS = 16;      // tree height
+const N = 8;              // how many demo users to generate (<= 2^N_LEVELS)
 
-// 3) Build flat Merkle tree (left-pad with zeros to next power-of-two)
-const size = 1 << N_LEVELS;
-const zero = 0n;
-const level0 = Array(size).fill(zero);
-leaves.forEach((leaf, i) => level0[i] = leaf);
+// helpers
+const big = (n) => BigInt(n);
+const toDecStr = (x) => big(x).toString();
 
-const tree = [level0];
-for (let l=0; l<N_LEVELS; l++){
-  const cur = tree[l];
-  const next = [];
-  for (let i=0;i<cur.length;i+=2){
-    const left = cur[i];
-    const right = cur[i+1];
-    next.push(await poseidon([left, right]));
-  }
-  tree.push(next);
-}
-const root = tree[N_LEVELS][0];
-
-// 4) Export root
-fs.mkdirSync("public", { recursive: true });
-fs.writeFileSync("public/root.json", JSON.stringify({ root: root.toString() }, null, 2));
-
-// 5) Per-user paths
-fs.mkdirSync("inputs/users", { recursive: true });
-
-for (let idx=0; idx<leaves.length; idx++){
-  const secret = secrets[idx];
-  const pathElements = [];
-  const pathIndex = [];
-
-  let pos = idx; // position at level 0
-  let cur = leaves[idx];
-
-  for (let l=0; l<N_LEVELS; l++){
-    const isRight = pos & 1;
-    const siblingPos = isRight ? pos - 1 : pos + 1;
-    pathElements.push(tree[l][siblingPos]);
-    pathIndex.push(isRight); // 0 => cur on left, 1 => cur on right
-    pos = pos >> 1;
-  }
-
-  // externalNullifier: pick per-event integer id (demo=12345)
-  const externalNullifier = 12345n;
-  const nullifierHash = await poseidon([secret, externalNullifier]);
-
-  const userInput = {
-    secret: secret.toString(),
-    pathElements: pathElements.map(x => x.toString()),
-    pathIndex,
-    root: root.toString(),
-    externalNullifier: externalNullifier.toString(),
-    nullifierHash: nullifierHash.toString()
-  };
-
-  fs.writeFileSync(`inputs/users/user_${idx}.json`, JSON.stringify(userInput, null, 2));
+// cryptographically-strong random 32 bytes -> hex
+function cryptoRandomHex(nBytes = 32) {
+  const arr = new Uint8Array(nBytes);
+  crypto.getRandomValues(arr);
+  return [...arr].map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
-console.log("Root:", root.toString());
-console.log("Wrote:", "public/root.json and inputs/users/user_*.json");
+(async () => {
+  // 0) build Poseidon
+  const P = await buildPoseidon();
+  const H1 = (x) => P.F.toObject(P([x]));            // leaf hash: Poseidon(secret)
+  const H2 = (a, b) => P.F.toObject(P([a, b]));      // internal node
+  const Nullifier = (s, ext) => P.F.toObject(P([s, ext]));
+
+  // 1) generate secrets
+  const secrets = Array.from({ length: N }, () =>
+    BigInt.asUintN(254, BigInt("0x" + cryptoRandomHex(32)))
+  );
+
+  // 2) leaves
+  const leaves = secrets.map((s) => H1(s));
+
+  // 3) build a power-of-two Merkle tree of height N_LEVELS
+  const size = 1 << N_LEVELS;
+  const zero = 0n;
+  const level0 = Array(size).fill(zero);
+  leaves.forEach((leaf, i) => (level0[i] = leaf));
+
+  const tree = [level0];
+  for (let l = 0; l < N_LEVELS; l++) {
+    const cur = tree[l];
+    const next = [];
+    for (let i = 0; i < cur.length; i += 2) {
+      const left = cur[i];
+      const right = cur[i + 1];
+      next.push(H2(left, right));
+    }
+    tree.push(next);
+  }
+  const root = tree[N_LEVELS][0];
+
+  // 4) write root for the frontend
+  fs.mkdirSync("public", { recursive: true });
+  fs.writeFileSync(
+    "public/root.json",
+    JSON.stringify({ root: toDecStr(root) }, null, 2)
+  );
+
+  // 5) per-user inputs
+  fs.mkdirSync("inputs/users", { recursive: true });
+
+  for (let idx = 0; idx < leaves.length; idx++) {
+    const secret = secrets[idx];
+    const pathElements = [];
+    const pathIndex = [];
+
+    let pos = idx;
+    for (let l = 0; l < N_LEVELS; l++) {
+      const isRight = pos & 1;
+      const siblingPos = isRight ? pos - 1 : pos + 1;
+      pathElements.push(tree[l][siblingPos] ?? zero);
+      pathIndex.push(isRight); // 0 => cur on left, 1 => cur on right
+      pos >>= 1;
+    }
+
+    const externalNullifier = 12345n; // event-specific id
+    const nullifierHash = Nullifier(secret, externalNullifier);
+
+    const userInput = {
+      secret: toDecStr(secret),
+      pathElements: pathElements.map(toDecStr),
+      pathIndex,                                // numbers 0/1
+      root: toDecStr(root),
+      externalNullifier: toDecStr(externalNullifier),
+      nullifierHash: toDecStr(nullifierHash),
+    };
+
+    fs.writeFileSync(
+      `inputs/users/user_${idx}.json`,
+      JSON.stringify(userInput, null, 2)
+    );
+  }
+
+  console.log("Root:", toDecStr(root));
+  console.log("Wrote public/root.json and inputs/users/user_*.json");
+})();
