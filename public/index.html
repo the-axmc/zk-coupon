@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ZK Coupon Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body{ font-family: system-ui, sans-serif; margin:2rem; }
+    textarea{ width:100%; height:140px; }
+    pre{ background:#f6f6f6; padding:1rem; overflow:auto; }
+    button{ padding:.6rem 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Anonymous Check-In (ZK Coupon)</h1>
+  <p>Prove you are on the list without revealing your identity. One-time use via nullifier.</p>
+
+  <button id="prove">Generate Proof</button>
+  <p id="status"></p>
+
+  <h3>Public Signals</h3>
+  <pre id="pub"></pre>
+
+  <h3>Proof</h3>
+  <textarea id="proof" readonly></textarea>
+
+  <h3>Local Verification</h3>
+  <pre id="verify"></pre>
+
+  <script src="https://unpkg.com/snarkjs@0.7.3/build/snarkjs.min.js"></script>
+  <script>
+    async function go(){
+      const log = (m)=> document.getElementById('status').textContent = m;
+
+      log("Loading inputs & artifacts…");
+      const [input, vkey] = await Promise.all([
+        fetch("input.json").then(r=>r.json()),
+        fetch("verification_key.json").then(r=>r.json())
+      ]);
+
+      // snarkjs expects BigInts as strings; already done in our generator.
+      const wasmUrl = "zkCoupon.wasm";
+      const zkeyUrl = "zkCoupon_final.zkey";
+
+      log("Proving (client-side) … this may take a few seconds");
+      const { proof, publicSignals } =
+        await window.snarkjs.plonk.fullProve(input, wasmUrl, zkeyUrl);
+
+      document.getElementById('pub').textContent = JSON.stringify(publicSignals, null, 2);
+      document.getElementById('proof').value = JSON.stringify(proof, null, 2);
+
+      const ok = await window.snarkjs.plonk.verify(vkey, publicSignals, proof);
+      document.getElementById('verify').textContent = ok ? "✅ Verified locally" : "❌ Failed";
+      log("Done.");
+    }
+
+    document.getElementById('prove').onclick = go;
+  </script>
+</body>
+</html>
