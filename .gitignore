@@ -1,0 +1,9 @@
+build/*.ptau
+build/*.zkey
+build/*.wtns
+inputs/users/*
+public/input.json
+public/proof.json
+public/publicSignals.json
+node_modules
+.env
